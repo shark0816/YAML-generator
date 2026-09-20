@@ -1,4 +1,162 @@
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
 
+    // ========== 功能 1：处理 Web 端的生成请求 ==========
+    if (url.pathname === '/generate' && request.method === 'POST') {
+      try {
+        const formData = await request.formData();
+        let subUrl = formData.get('subUrl')?.trim();
+        const version = formData.get('version') || 'lite';
+
+        if (!subUrl) {
+          return new Response(JSON.stringify({ error: '请输入订阅链接' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        const fetchedProxies = await fetchAndParseSub(subUrl);
+
+        if (!fetchedProxies || fetchedProxies.length === 0) {
+          return new Response(JSON.stringify({ error: '未能从订阅中解析出任何有效节点，请确认订阅链接是否正确' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
+        const yamlResult = buildFinalYaml(version, fetchedProxies);
+
+        return new Response(JSON.stringify({ yaml: yamlResult, nodeCount: fetchedProxies.length }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+      } catch (err) {
+        return new Response(JSON.stringify({ error: err.message || '生成失败' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // ========== 功能 2：处理客户端的 API 订阅请求（URL + 密码访问） ==========
+    // 匹配路径格式：/sub?url=Base64编码的机场链接&version=lite&key=你的密码
+    if (url.pathname === '/sub') {
+      const key = url.searchParams.get('key');
+      const version = url.searchParams.get('version') || 'lite';
+      const encodedSubUrl = url.searchParams.get('url');
+
+      if (!encodedSubUrl) {
+        return new Response('错误: 缺少 url 参数', { status: 400 });
+      }
+
+      let subUrl = '';
+      try {
+        // 解码 Base64 格式的机场订阅 URL
+        subUrl = atob(decodeURIComponent(encodedSubUrl));
+      } catch (e) {
+        return new Response('错误: url 参数 Base64 解析失败', { status: 400 });
+      }
+
+      try {
+        const fetchedProxies = await fetchAndParseSub(subUrl);
+
+        if (!fetchedProxies || fetchedProxies.length === 0) {
+          return new Response('错误: 未能从机场订阅中解析出有效节点', { status: 500 });
+        }
+
+        const yamlResult = buildFinalYaml(version, fetchedProxies);
+
+        // 返回标准配置文件响应（设置下载文件名与 Clash 请求头识别）
+        return new Response(yamlResult, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/yaml; charset=utf-8',
+            'Content-Disposition': `attachment; filename="666OS-${version}.yaml"`,
+            'Subscription-Userinfo': 'upload=0; download=0; total=1073741824000; expire=0'
+          }
+        });
+      } catch (err) {
+        return new Response(`拉取失败: ${err.message}`, { status: 500 });
+      }
+    }
+
+    // ========== 默认：渲染 Web 前端控制台 ==========
+    return new Response(html, {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' }
+    });
+  }
+};
+
+// ==================== 后端：抓取并解析订阅 ====================
+async function fetchAndParseSub(subUrl) {
+  const reqHeaders = {
+    'User-Agent': 'ClashMeta/1.18.0 Mihomo/1.18.0 clash',
+    'Accept': '*/*'
+  };
+
+  const subResp = await fetch(subUrl, { headers: reqHeaders, redirect: 'follow' });
+  if (!subResp.ok) {
+    throw new Error(`机场返回 HTTP ${subResp.status}`);
+  }
+
+  const rawSubData = await subResp.text();
+  let proxies = parseSubToProxies(rawSubData);
+
+  // 节点关键词过滤
+  const filterRegex = /(群|邀请|返利|循环|官网|客服|网站|网址|获取|订阅|流量|到期|机场|下次|版本|官址|备用|过期|已用|联系|邮箱|工单|贩卖|通知|倒卖|防止|国内|地址|频道|USE|USED|TOTAL|EXPIRE|EMAIL|Panel|Channel|Author)/i;
+  
+  return proxies.filter(p => p && !filterRegex.test(p));
+}
+
+// ==================== 辅助功能：订阅解析器 ====================
+function parseSubToProxies(data) {
+  data = data.trim();
+
+  if (!data.includes('proxies:') && !data.includes('port:')) {
+    try {
+      const decoded = atob(data.replace(/\s/g, ''));
+      if (decoded.includes('proxies:')) {
+        data = decoded;
+      }
+    } catch (e) {}
+  }
+
+  if (data.includes('proxies:')) {
+    const match = data.match(/proxies:\s*\n([\s\S]*?)(?=\n[a-zA-Z0-9_-]+:|$)/);
+    if (match && match[1]) {
+      return parseYamlProxiesBlock(match[1]);
+    }
+  }
+
+  return [];
+}
+
+function parseYamlProxiesBlock(proxiesBlock) {
+  const lines = proxiesBlock.split('\n');
+  const proxies = [];
+  let currentProxyStr = '';
+
+  for (const line of lines) {
+    if (line.trim().startsWith('- name:') || line.trim().startsWith('- { name:')) {
+      if (currentProxyStr) {
+        proxies.push(currentProxyStr);
+      }
+      currentProxyStr = line + '\n';
+    } else if (currentProxyStr) {
+      currentProxyStr += line + '\n';
+    }
+  }
+  if (currentProxyStr) proxies.push(currentProxyStr);
+
+  return proxies;
+}
+
+// ==================== 辅助功能：生成完整 YAML ====================
+function buildFinalYaml(version, proxies) {
+  const proxiesYamlStr = proxies.join('');
+
+  return `
 mode: rule
 mixed-port: 7893
 allow-lan: false
@@ -20,26 +178,7 @@ dns:
     - 119.29.29.29
 
 proxies:
-    - { name: 🇺🇸美国专线01, server: 132.145.137.155, port: 51000, ports: 51000-53000, mport: 51000-53000, udp: true, skip-cert-verify: true, sni: cn.cremedelamer.com, type: hysteria2, password: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, fingerprint: 13a95d801c2b834991f49ce6c6fe754809f8ca2dbf52a4dbc1aeb6885b46cb27 }
-    - { name: 🇺🇸美国专线02, server: 129.146.124.201, port: 51000, ports: 51000-53000, mport: 51000-53000, udp: true, skip-cert-verify: true, sni: cn.cremedelamer.com, type: hysteria2, password: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, fingerprint: d97a9e258f15741cbdbee2ccb4580b20abec969ca70f272f4c1970dfce944ff1 }
-    - { name: 🇦🇺澳大利亚专线01, server: 159.13.40.81, port: 51000, ports: 51000-53000, mport: 51000-53000, udp: true, skip-cert-verify: true, sni: cn.cremedelamer.com, type: hysteria2, password: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, fingerprint: 9b92e6da557f1d4cc0c698d135154f07b8ab39f67d5714ce841b21a324a03b33 }
-    - { name: 🇦🇺澳大利亚专线02, server: 192.9.179.140, port: 51000, ports: 51000-53000, mport: 51000-53000, udp: true, skip-cert-verify: true, sni: cn.cremedelamer.com, type: hysteria2, password: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, fingerprint: 8d120b1449b52fe48e98e41c7ee5c0c471574179d5b2e968ba3db5f7575a63a4 }
-    - { name: 🇮🇳印度专线01, server: 144.24.109.215, port: 51000, ports: 51000-53000, mport: 51000-53000, udp: true, skip-cert-verify: true, sni: cn.cremedelamer.com, type: hysteria2, password: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, fingerprint: 236656426d6094bd5dac2054533d713854d14ce89a41ca0da7e9a6a14d2a7edf }
-    - { name: 🇮🇳印度专线02, server: 141.148.222.181, port: 51000, ports: 51000-53000, mport: 51000-53000, udp: true, skip-cert-verify: true, sni: cn.cremedelamer.com, type: hysteria2, password: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, fingerprint: 3657f3d6126f53ae984af56c82b7744ca55f31f49dea560996112af192ed1177 }
-    - { name: 🇧🇷巴西专线01, server: 168.75.68.172, port: 51000, ports: 51000-53000, mport: 51000-53000, udp: true, skip-cert-verify: true, sni: cn.cremedelamer.com, type: hysteria2, password: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, fingerprint: 615b8e1622a98c5f1da3c923bb64b07bd04749146b33a134125dc1a6920ba04c }
-    - { name: 🇧🇷巴西专线02, server: 144.22.197.28, port: 51000, ports: 51000-53000, mport: 51000-53000, udp: true, skip-cert-verify: true, sni: cn.cremedelamer.com, type: hysteria2, password: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, fingerprint: 395981c03224ffc29cdda4e168cada627e08bba5af89cc711e6c136580445bf4 }
-    - { name: 🇺🇸美国高速01, type: vless, server: 63.141.128.158, port: 443, uuid: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, udp: true, tls: true, skip-cert-verify: false, flow: '', client-fingerprint: chrome, network: ws, ws-opts: { path: /ym/us1, headers: { Host: us1s.xn--mirrors-oj8km52txc7d.com } } }
-    - { name: 🇺🇸美国高速02, type: vless, server: 63.141.128.158, port: 443, uuid: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, udp: true, tls: true, skip-cert-verify: false, flow: '', client-fingerprint: chrome, network: ws, ws-opts: { path: /ym/us2, headers: { Host: us2s.xn--mirrors-oj8km52txc7d.com } } }
-    - { name: 🇮🇳印度高速01, type: vless, server: 63.141.128.158, port: 443, uuid: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, udp: true, tls: true, skip-cert-verify: false, flow: '', client-fingerprint: chrome, network: ws, ws-opts: { path: /ym/in1, headers: { Host: in1s.xn--mirrors-oj8km52txc7d.com } } }
-    - { name: 🇦🇺澳大利亚高速01, type: vless, server: 63.141.128.158, port: 443, uuid: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, udp: true, tls: true, skip-cert-verify: false, flow: '', client-fingerprint: chrome, network: ws, ws-opts: { path: /ym/au1, headers: { Host: au1s.xn--mirrors-oj8km52txc7d.com } } }
-    - { name: 🇦🇺澳大利亚高速02, type: vless, server: 63.141.128.158, port: 443, uuid: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, udp: true, tls: true, skip-cert-verify: false, flow: '', client-fingerprint: chrome, network: ws, ws-opts: { path: /ym/au2, headers: { Host: au2s.xn--mirrors-oj8km52txc7d.com } } }
-    - { name: 🇫🇷法国高速01, type: vless, server: 63.141.128.158, port: 443, uuid: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, udp: true, tls: true, skip-cert-verify: false, flow: '', client-fingerprint: chrome, network: ws, ws-opts: { path: /ym/fr1, headers: { Host: fr1s.xn--mirrors-oj8km52txc7d.com } } }
-    - { name: 🇫🇷法国马赛, type: vless, server: 144.24.206.147, port: 443, uuid: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, udp: true, tls: true, skip-cert-verify: false, flow: xtls-rprx-vision, client-fingerprint: chrome, servername: updates.cdn-apple.com, reality-opts: { public-key: PbE_bZXVNqPOIdkffGIuwgJRlRrW2FLinx3bZ9jgdkk, short-id: 558ae2c2 } }
-    - { name: 🇺🇸美国圣何塞01, type: vless, server: 192.9.142.185, port: 443, uuid: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, udp: true, tls: true, skip-cert-verify: false, flow: xtls-rprx-vision, client-fingerprint: chrome, servername: updates.cdn-apple.com, reality-opts: { public-key: VfpWBFurCnD5vlLddUI0L7SZmtUMewB_eDe8J4ylo34, short-id: ec33edce } }
-    - { name: 🇺🇸美国圣何塞02, type: vless, server: 165.1.68.155, port: 443, uuid: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, udp: true, tls: true, skip-cert-verify: false, flow: xtls-rprx-vision, client-fingerprint: chrome, servername: updates.cdn-apple.com, reality-opts: { public-key: Ab-BOqKWcxRp1eyCRKgXLm6TKNIutbrWd_mZPf4VlAc, short-id: 042a1f2c } }
-    - { name: 🇳🇱荷兰阿姆斯特丹, type: vless, server: 158.101.195.118, port: 443, uuid: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, udp: true, tls: true, skip-cert-verify: false, flow: xtls-rprx-vision, client-fingerprint: chrome, servername: updates.cdn-apple.com, reality-opts: { public-key: zqxFCQCJpH6bAW8Rx3mlL_Cl9AQthiEWFOd6iFyMwAI, short-id: 38d05146 } }
-    - { name: 🇬🇧英国伦敦, type: vless, server: 141.147.102.96, port: 443, uuid: d8442c3c-5b28-4b2d-a8a9-ff8444fa6083, udp: true, tls: true, skip-cert-verify: false, flow: xtls-rprx-vision, client-fingerprint: chrome, servername: updates.cdn-apple.com, reality-opts: { public-key: hWMyxt6Zp2m_sDV_RRykpYJ3Ds88O6wnuE6xQjcPnXQ, short-id: db9b6326 } }
-
+${proxiesYamlStr}
 
 x-url-test: &url-test
   type: url-test
@@ -144,9 +283,10 @@ proxy-groups:
 rules:
   - RULE-SET,Private,DIRECT
   - RULE-SET,PrivateIP,DIRECT,no-resolve
-  - RULE-SET,TM,即时通讯
+  # 优先匹配 Telegram 域名与 IP（去掉 no-resolve 以防漏抓直连流量）
   - RULE-SET,Telegram,即时通讯
-  - RULE-SET,TelegramIP,即时通讯,no-resolve
+  - RULE-SET,TelegramIP,即时通讯
+  - RULE-SET,TM,即时通讯
   - RULE-SET,SocialMedia,社交平台
   - RULE-SET,SocialMediaIP,社交平台,no-resolve
   - RULE-SET,AI,人工智能
@@ -183,3 +323,170 @@ rule-providers:
   GoogleIP: {type: http, behavior: ipcidr, format: mrs, interval: 86400, url: https://github.com/666OS/rules/raw/release/mihomo/ip/Google.mrs}
   ProxyIP: {type: http, behavior: ipcidr, format: mrs, interval: 86400, url: https://github.com/666OS/rules/raw/release/mihomo/ip/Proxy.mrs}
   ChinaIP: {type: http, behavior: ipcidr, format: mrs, interval: 86400, url: https://github.com/666OS/rules/raw/release/mihomo/ip/China.mrs}
+`;
+}
+
+// ==================== 前端 HTML 视图页面 ====================
+const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>666OS 订阅转换服务</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+    .container { max-width: 800px; margin: 0 auto; }
+    h1 {
+      text-align: center;
+      font-size: 26px;
+      margin-bottom: 8px;
+      background: linear-gradient(90deg, #60a5fa, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle { text-align: center; color: #94a3b8; margin-bottom: 28px; font-size: 14px; }
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 24px;
+      border: 1px solid #334155;
+    }
+    label { display: block; margin-bottom: 8px; font-size: 14px; color: #94a3b8; }
+    input, select {
+      width: 100%;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: #e2e8f0;
+      margin-bottom: 16px;
+      outline: none;
+    }
+    .btn-group { display: flex; gap: 10px; margin-bottom: 16px; }
+    button {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-primary { background: #3b82f6; color: white; }
+    .btn-secondary { background: #334155; color: #e2e8f0; }
+    #result { display: none; margin-top: 20px; }
+    textarea {
+      width: 100%;
+      height: 120px;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: #60a5fa;
+      font-family: monospace;
+      font-size: 13px;
+      resize: none;
+    }
+    .action-btns { display: flex; gap: 10px; margin-top: 10px; }
+    .copy-btn { background: #10b981; color: white; }
+    .status { text-align: center; margin: 12px 0; font-size: 14px; }
+    .link-box {
+      background: #0f172a;
+      border: 1px dashed #60a5fa;
+      padding: 12px;
+      border-radius: 8px;
+      word-break: break-all;
+      margin-bottom: 12px;
+      font-family: monospace;
+      font-size: 13px;
+      color: #93c5fd;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>666OS 订阅转换服务</h1>
+    <p class="subtitle">支持生成客户端专属订阅链接，填入 App 自动更新节点</p>
+
+    <div class="card">
+      <label>机场订阅链接</label>
+      <input type="text" id="subUrl" placeholder="粘贴你的机场通用 / Clash 订阅链接" />
+
+      <label>配置版本</label>
+      <select id="version">
+        <option value="lite">Lite 版</option>
+        <option value="pro">Pro 版</option>
+      </select>
+
+      <label>自定义访问 Key / 密码 (可选，增强隐蔽性)</label>
+      <input type="text" id="secretKey" placeholder="例如：mysecret123 (可不填)" />
+
+      <div class="btn-group">
+        <button class="btn-primary" onclick="generateLink()">生成通用订阅链接</button>
+        <button class="btn-secondary" onclick="clearAll()">清空</button>
+      </div>
+
+      <div class="status" id="status"></div>
+
+      <div id="result">
+        <label>你的专属订阅链接 (直接复制粘贴到 Clash / App 中)：</label>
+        <div class="link-box" id="subLinkText"></div>
+        <div class="action-btns">
+          <button class="copy-btn" onclick="copyLink()">一键复制订阅链接</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function generateLink() {
+      const subUrl = document.getElementById('subUrl').value.trim();
+      const version = document.getElementById('version').value;
+      const secretKey = document.getElementById('secretKey').value.trim();
+      const status = document.getElementById('status');
+      const result = document.getElementById('result');
+      const subLinkText = document.getElementById('subLinkText');
+
+      if (!subUrl) {
+        status.textContent = '请输入机场订阅链接';
+        status.style.color = '#f87171';
+        return;
+      }
+
+      // 链接安全转码
+      const encodedSub = encodeURIComponent(btoa(subUrl));
+      const origin = window.location.origin;
+
+      let finalSubUrl = \`\${origin}/sub?url=\${encodedSub}&version=\${version}\`;
+      if (secretKey) {
+        finalSubUrl += \`&key=\${encodeURIComponent(secretKey)}\`;
+      }
+
+      subLinkText.textContent = finalSubUrl;
+      result.style.display = 'block';
+      status.textContent = '生成成功！请复制下方订阅链接：';
+      status.style.color = '#34d399';
+    }
+
+    function copyLink() {
+      const text = document.getElementById('subLinkText').textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        alert('订阅链接已复制到剪贴板！可以直接填入 Clash / Mihomo 中');
+      });
+    }
+
+    function clearAll() {
+      document.getElementById('subUrl').value = '';
+      document.getElementById('secretKey').value = '';
+      document.getElementById('result').style.display = 'none';
+      document.getElementById('status').textContent = '';
+    }
+  </script>
+</body>
+</html>`;
