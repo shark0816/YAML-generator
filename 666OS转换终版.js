@@ -588,5 +588,251 @@ rule-providers:
   ChinaIP: {type: http, behavior: ipcidr, format: mrs, interval: 86400, url: https://github.com/666OS/rules/raw/release/mihomo/ip/China.mrs}
 `;
 
-// 前端页面逻辑保持原样
-const html = `...`; // 页面代码不需要变动
+// 前端页面 HTML 模板
+const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>666OS YAML 生成器</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+    .container { max-width: 920px; margin: 0 auto; }
+    h1 {
+      text-align: center;
+      font-size: 28px;
+      margin-bottom: 8px;
+      background: linear-gradient(90deg, #60a5fa, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      text-align: center;
+      color: #94a3b8;
+      margin-bottom: 36px;
+      font-size: 14px;
+    }
+    .card {
+      background: #1e293b;
+      border-radius: 16px;
+      padding: 28px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+      border: 1px solid #334155;
+    }
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+      color: #94a3b8;
+    }
+    input, select {
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: 10px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 15px;
+      margin-bottom: 20px;
+      outline: none;
+    }
+    input:focus, select:focus { border-color: #60a5fa; }
+    .btn-group { display: flex; gap: 12px; margin-bottom: 20px; }
+    button {
+      flex: 1;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+      color: white;
+    }
+    .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+    .btn-secondary { background: #334155; color: #e2e8f0; }
+    .btn-secondary:hover { background: #475569; }
+    #result { display: none; margin-top: 24px; }
+    textarea {
+      width: 100%;
+      height: 420px;
+      padding: 16px;
+      border-radius: 10px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: "SF Mono", Monaco, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      resize: vertical;
+    }
+    .action-btns { display: flex; gap: 12px; margin-top: 14px; }
+    .copy-btn { background: #10b981; color: white; }
+    .copy-btn:hover { background: #059669; }
+    .download-btn { background: #3b82f6; color: white; }
+    .download-btn:hover { background: #2563eb; }
+    .status {
+      text-align: center;
+      margin: 16px 0;
+      font-size: 14px;
+      color: #94a3b8;
+      min-height: 20px;
+    }
+    .tip {
+      background: #1e3a5f;
+      border-left: 4px solid #3b82f6;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #93c5fd;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 40px;
+      color: #64748b;
+      font-size: 13px;
+    }
+    .footer a { color: #60a5fa; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>666OS YAML 生成器</h1>
+    <p class="subtitle">实时获取作者最新模板 · 自动兼容修复 · 保证节点可加载</p>
+
+    <div class="card">
+      <div class="tip">
+        <strong>修复说明：</strong><br>
+        • 改进了正则替换和节点过滤规则（放宽排除关键词，防止误杀正常节点）<br>
+        • 自动包含 <code>flag=meta</code> 参数<br>
+        • 测速地址统一强制替换为 Cloudflare 测试点，提高兼容性<br>
+        • 上游拉取失败或解析异常时自动平滑降级到内置稳定配置
+      </div>
+
+      <label>机场 / 节点订阅链接</label>
+      <input type="text" id="subUrl" placeholder="粘贴你的订阅链接" />
+
+      <label>选择版本</label>
+      <select id="version">
+        <option value="lite">Lite（轻量推荐）</option>
+        <option value="pro">Pro（完整功能，含广告拦截）</option>
+      </select>
+
+      <div class="btn-group">
+        <button class="btn-primary" onclick="generate()">生成 YAML</button>
+        <button class="btn-secondary" onclick="clearAll()">清空</button>
+      </div>
+
+      <div class="status" id="status"></div>
+
+      <div id="result">
+        <label>生成的 YAML</label>
+        <textarea id="yamlOutput" readonly></textarea>
+        <div class="action-btns">
+          <button class="copy-btn" onclick="copyYaml()">一键复制 YAML</button>
+          <button class="download-btn" onclick="downloadYaml()">下载 YAML 文件</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      模板来源：<a href="https://github.com/666OS/YYDS" target="_blank">666OS/YYDS</a>
+    </div>
+  </div>
+
+  <script>
+    let currentVersion = 'lite';
+
+    async function generate() {
+      const subUrl = document.getElementById('subUrl').value.trim();
+      const version = document.getElementById('version').value;
+      currentVersion = version;
+      const status = document.getElementById('status');
+      const result = document.getElementById('result');
+      const output = document.getElementById('yamlOutput');
+
+      if (!subUrl) {
+        status.textContent = '请先输入订阅链接';
+        status.style.color = '#f87171';
+        return;
+      }
+
+      status.textContent = '正在生成...';
+      status.style.color = '#94a3b8';
+      result.style.display = 'none';
+
+      try {
+        const formData = new FormData();
+        formData.append('subUrl', subUrl);
+        formData.append('version', version);
+
+        const res = await fetch('/generate', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await res.json();
+
+        if (data.error) {
+          status.textContent = '错误：' + data.error;
+          status.style.color = '#f87171';
+          return;
+        }
+
+        output.value = data.yaml;
+        result.style.display = 'block';
+        status.textContent = '生成成功！';
+        status.style.color = '#34d399';
+      } catch (err) {
+        status.textContent = '请求失败：' + err.message;
+        status.style.color = '#f87171';
+      }
+    }
+
+    function copyYaml() {
+      const output = document.getElementById('yamlOutput');
+      output.select();
+      document.execCommand('copy');
+      document.getElementById('status').textContent = '已复制到剪贴板！';
+      document.getElementById('status').style.color = '#34d399';
+    }
+
+    function downloadYaml() {
+      const content = document.getElementById('yamlOutput').value;
+      if (!content) return;
+
+      const blob = new Blob([content], { type: 'text/yaml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = currentVersion === 'pro' ? '666OS-Pro.yaml' : '666OS-Lite.yaml';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      document.getElementById('status').textContent = 'YAML 文件已开始下载';
+      document.getElementById('status').style.color = '#34d399';
+    }
+
+    function clearAll() {
+      document.getElementById('subUrl').value = '';
+      document.getElementById('yamlOutput').value = '';
+      document.getElementById('result').style.display = 'none';
+      document.getElementById('status').textContent = '';
+    }
+  </script>
+</body>
+</html>`;
