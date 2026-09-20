@@ -1,4 +1,3 @@
-```
 # 666OS YAML 生成器
 一个基于 Cloudflare Workers 的在线工具，快速生成适配 Mihomo (Clash Meta) 的配置文件。
 输入订阅链接，即可生成带有 Lite / Pro 规则集的 YAML，支持一键复制或下载。
@@ -42,14 +41,13 @@ wrangler login
 ```
 
 在项目目录新建 `wrangler.toml`：
-
-```
+```toml
 name = "yaml-generator"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 ```
 
-```
+```bash
 # 执行部署
 wrangler deploy
 ```
@@ -57,12 +55,11 @@ wrangler deploy
 ---
 
 ## 📖 使用教程
-
 1. 打开部署完成的 Worker 页面
 2. 在输入框粘贴你的订阅链接
 3. 选择配置版本
-   - **Lite**：轻量版本，大多数场景推荐使用
-   - **Pro**：完整版本，包含广告拦截与更多策略组
+   - Lite：轻量版本，大多数场景推荐使用
+   - Pro：完整版本，包含广告拦截与更多策略组
 4. 点击 **生成 YAML**
 5. 生成完成后可选操作：
    - 点击 **复制 YAML**，复制配置到剪贴板
@@ -72,19 +69,16 @@ wrangler deploy
 ---
 
 ## 🔄 模板来源与更新机制
-
 配置模板来自开源仓库：[https://github.com/666OS/YYDS](https://github.com/666OS/YYDS)
-
 - Lite 模板：[https://raw.githubusercontent.com/666OS/YYDS/main/mihomo/config/cn/Lite_cn.yaml](https://raw.githubusercontent.com/666OS/YYDS/main/mihomo/config/cn/Lite_cn.yaml)
 - Pro 模板：[https://raw.githubusercontent.com/666OS/YYDS/main/mihomo/config/cn/Pro_cn.yaml](https://raw.githubusercontent.com/666OS/YYDS/main/mihomo/config/cn/Pro_cn.yaml)
 
-每次请求会动态获取上游最新 YAML。依靠 Cloudflare 边缘缓存（`cacheTtl: 3600`，1 小时）减少对 GitHub 请求。
+每次请求会动态获取上游最新 YAML。依靠 Cloudflare 边缘缓存（`cacheTtl: 3600`，1小时）减少对 GitHub 请求。
 当上游拉取失败（网络超时、GitHub 无法访问）时，自动切换内置默认模板，保证服务可用。
 
 ---
 
 ## ⚠️ 注意事项
-
 - 请确认订阅链接有效，且支持 Meta 格式
 - 生成配置仅供个人学习使用，请遵守当地法律法规
 - 上游模板结构可能变更，若订阅替换失效，请修改 `worker.js` 中的正则表达式
@@ -93,7 +87,6 @@ wrangler deploy
 ---
 
 ## 🙏 致谢
-
 - 模板作者：[https://github.com/666OS](https://github.com/666OS)
 - 图标来源：[https://github.com/Koolson/Qure](https://github.com/Koolson/Qure)
 - 规则集：[https://github.com/666OS/rules](https://github.com/666OS/rules)
@@ -102,5 +95,5 @@ wrangler deploy
 ---
 
 ## 📄 许可协议
-
 MIT License
+```
