@@ -1,4 +1,4 @@
-# 666OS YAML 生成器
+# YAML 生成器
 一个基于 Cloudflare Workers 的在线工具，快速生成适配 Mihomo (Clash Meta) 的配置文件。
 输入订阅链接，即可生成带有 Lite / Pro 规则集的 YAML，支持一键复制或下载。
 
